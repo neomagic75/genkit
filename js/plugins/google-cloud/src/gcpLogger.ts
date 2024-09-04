@@ -17,7 +17,7 @@
 import { LoggerConfig } from '@genkit-ai/core';
 import { LoggingWinston } from '@google-cloud/logging-winston';
 import { Writable } from 'stream';
-import { PluginOptions } from './index.js';
+import { GcpPluginConfig } from './types.js';
 
 /**
  * Additional streams for writing log data to. Useful for unit testing.
@@ -29,20 +29,20 @@ let additionalStream: Writable;
  * logs.
  */
 export class GcpLogger implements LoggerConfig {
-  private readonly options: PluginOptions;
+  private readonly config: GcpPluginConfig;
 
-  constructor(options?: PluginOptions) {
-    this.options = options || {};
+  constructor(config: GcpPluginConfig) {
+    this.config = config;
   }
 
-  async getLogger(env: string) {
+  async getLogger(env?: string) {
     // Dynamically importing winston here more strictly controls
     // the import order relative to registering instrumentation
     // with OpenTelemetry. Incorrect import order will trigger
     // an internal OT warning and will result in logs not being
     // associated with correct spans/traces.
     const winston = await import('winston');
-    const format = this.shouldExport(env)
+    const format = this.config.telemetryConfig.export
       ? { format: winston.format.json() }
       : {
           format: winston.format.printf((info): string => {
@@ -52,13 +52,13 @@ export class GcpLogger implements LoggerConfig {
 
     let transports: any[] = [];
     transports.push(
-      this.shouldExport(env)
+      this.config.telemetryConfig.export
         ? new LoggingWinston({
-            projectId: this.options.projectId,
+            projectId: this.config.projectId,
             labels: { module: 'genkit' },
             prefix: 'genkit',
             logName: 'genkit_log',
-            credentials: this.options.credentials,
+            credentials: this.config.credentials,
           })
         : new winston.transports.Console()
     );
@@ -71,10 +71,6 @@ export class GcpLogger implements LoggerConfig {
       transports: transports,
       ...format,
     });
-  }
-
-  private shouldExport(env: string) {
-    return this.options.telemetryConfig?.forceDevExport || env !== 'dev';
   }
 }
 

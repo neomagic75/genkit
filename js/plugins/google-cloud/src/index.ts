@@ -14,44 +14,104 @@
  * limitations under the License.
  */
 
-import { genkitPlugin, Plugin } from '@genkit-ai/core';
+import { genkitPlugin, isDevEnv, Plugin } from '@genkit-ai/core';
 import { InstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-node';
 import { Instrumentation } from '@opentelemetry/instrumentation';
-import { Sampler } from '@opentelemetry/sdk-trace-base';
+import { AlwaysOnSampler, Sampler } from '@opentelemetry/sdk-trace-base';
 import { GoogleAuth, JWTInput } from 'google-auth-library';
 import { GcpLogger } from './gcpLogger.js';
 import { GcpOpenTelemetry } from './gcpOpenTelemetry.js';
+import { GcpPluginConfig, GcpTelemetryConfig } from './types.js';
 
-export interface PluginOptions {
+/** Configuration options for the Google Cloud plugin. */
+export interface GcpPluginOptions {
+  /** Cloud projectId is required, either passed here, through GCLOUD_PROJECT or application default credentials. */
   projectId?: string;
-  telemetryConfig?: TelemetryConfig;
+
+  /** Telemetry configuration overrides. Defaults will be provided depending on the Genkit environment. */
+  telemetryConfig?: GcpTelemetryConfigOptions;
+
+  /** Credentials must be provided to export telemetry, if not available through the environment. */
   credentials?: JWTInput;
 }
 
-export interface TelemetryConfig {
+export interface GcpTelemetryConfigOptions {
+  /** Trace sampler, defaults to always on which exports all traces. */
   sampler?: Sampler;
+
+  /** Include OpenTelemetry autoInstrumentation. Defaults to true. */
   autoInstrumentation?: boolean;
   autoInstrumentationConfig?: InstrumentationConfigMap;
-  metricExportIntervalMillis?: number;
-  metricExportTimeoutMillis?: number;
   instrumentations?: Instrumentation[];
 
-  /** When true, metrics are not sent to GCP. */
+  /** Metric export intervals, minimum is 5000ms. */
+  metricExportIntervalMillis?: number;
+  metricExportTimeoutMillis?: number;
+
+  /** When true, metrics are not exported. */
   disableMetrics?: boolean;
 
-  /** When true, traces are not sent to GCP. */
+  /** When true, traces are not exported. */
   disableTraces?: boolean;
 
-  /** When true, telemetry data will be exported, even for local runs */
+  /** When true, telemetry data will be exported, even for local runs. Defaults to not exporting development traces. */
   forceDevExport?: boolean;
 }
+
+/** Consolidated defaults for telemetry configuration. */
+
+export const TelemetryConfigs = {
+  defaults: (overrides: GcpTelemetryConfigOptions = {}): GcpTelemetryConfig => {
+    return isDevEnv()
+      ? TelemetryConfigs.developmentDefaults(overrides)
+      : TelemetryConfigs.productionDefaults(overrides);
+  },
+
+  developmentDefaults: (
+    overrides: GcpTelemetryConfigOptions = {}
+  ): GcpTelemetryConfig => {
+    const defaults = {
+      sampler: new AlwaysOnSampler(),
+      autoInstrumentation: true,
+      autoInstrumentationConfig: {
+        '@opentelemetry/instrumentation-dns': { enabled: false },
+      },
+      instrumentations: [],
+      metricExportIntervalMillis: 5_000,
+      metricExportTimeoutMillis: 5_000,
+      disableMetrics: false,
+      disableTraces: false,
+      export: !!overrides.forceDevExport, // false
+    };
+    return { ...defaults, ...overrides };
+  },
+
+  productionDefaults: (
+    overrides: GcpTelemetryConfigOptions = {}
+  ): GcpTelemetryConfig => {
+    const defaults = {
+      sampler: new AlwaysOnSampler(),
+      autoInstrumentation: true,
+      autoInstrumentationConfig: {
+        '@opentelemetry/instrumentation-dns': { enabled: false },
+      },
+      instrumentations: [],
+      metricExportIntervalMillis: 300_000,
+      metricExportTimeoutMillis: 300_000,
+      disableMetrics: false,
+      disableTraces: false,
+      export: true,
+    };
+    return { ...defaults, ...overrides };
+  },
+};
 
 /**
  * Provides a plugin for using Genkit with GCP.
  */
-export const googleCloud: Plugin<[PluginOptions] | []> = genkitPlugin(
+export const googleCloud: Plugin<[GcpPluginOptions] | []> = genkitPlugin(
   'googleCloud',
-  async (options?: PluginOptions) => {
+  async (options?: GcpPluginOptions) => {
     let authClient;
     let credentials;
 
@@ -63,29 +123,26 @@ export const googleCloud: Plugin<[PluginOptions] | []> = genkitPlugin(
       );
       const authOptions = { credentials: serviceAccountCreds };
       authClient = new GoogleAuth(authOptions);
-
       credentials = await authClient.getCredentials();
     } else {
       authClient = new GoogleAuth();
     }
 
-    const projectId = options?.projectId || (await authClient.getProjectId());
-
-    const optionsWithProjectIdAndCreds = {
-      ...options,
-      projectId,
-      credentials,
+    const config: GcpPluginConfig = {
+      projectId: options?.projectId || (await authClient.getProjectId()),
+      telemetryConfig: TelemetryConfigs.defaults(options?.telemetryConfig),
+      credentials: options?.credentials,
     };
 
     return {
       telemetry: {
         instrumentation: {
           id: 'googleCloud',
-          value: new GcpOpenTelemetry(optionsWithProjectIdAndCreds),
+          value: new GcpOpenTelemetry(config),
         },
         logger: {
           id: 'googleCloud',
-          value: new GcpLogger(optionsWithProjectIdAndCreds),
+          value: new GcpLogger(config),
         },
       },
     };

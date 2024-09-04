@@ -36,13 +36,12 @@ import {
 } from '@opentelemetry/sdk-metrics';
 import { NodeSDKConfiguration } from '@opentelemetry/sdk-node';
 import {
-  AlwaysOnSampler,
   BatchSpanProcessor,
   InMemorySpanExporter,
   ReadableSpan,
   SpanExporter,
 } from '@opentelemetry/sdk-trace-base';
-import { PluginOptions } from './index.js';
+import { GcpPluginConfig } from './types.js';
 
 let metricExporter: PushMetricExporter;
 let spanProcessor: BatchSpanProcessor;
@@ -53,7 +52,7 @@ let spanExporter: AdjustingTraceExporter;
  * Metrics, and Logs) to the Google Cloud Operations Suite.
  */
 export class GcpOpenTelemetry implements TelemetryConfig {
-  private readonly options: PluginOptions;
+  private readonly config: GcpPluginConfig;
   private readonly resource: Resource;
 
   /**
@@ -63,14 +62,14 @@ export class GcpOpenTelemetry implements TelemetryConfig {
   private gcpTraceLogHook = (span: Span, record: any) => {
     const isSampled = !!(span.spanContext().traceFlags & TraceFlags.SAMPLED);
     record['logging.googleapis.com/trace'] = `projects/${
-      this.options.projectId
+      this.config.projectId
     }/traces/${span.spanContext().traceId}`;
     record['logging.googleapis.com/spanId'] = span.spanContext().spanId;
     record['logging.googleapis.com/trace_sampled'] = isSampled ? '1' : '0';
   };
 
-  constructor(options?: PluginOptions) {
-    this.options = options || {};
+  constructor(config: GcpPluginConfig) {
+    this.config = config;
     this.resource = new Resource({ type: 'global' }).merge(
       new GcpDetectorSync().detect()
     );
@@ -81,7 +80,7 @@ export class GcpOpenTelemetry implements TelemetryConfig {
     return {
       resource: this.resource,
       spanProcessor: spanProcessor,
-      sampler: this.options?.telemetryConfig?.sampler || new AlwaysOnSampler(),
+      sampler: this.config.telemetryConfig.sampler,
       instrumentations: this.getInstrumentations(),
       metricReader: this.createMetricReader(),
     };
@@ -91,7 +90,7 @@ export class GcpOpenTelemetry implements TelemetryConfig {
     spanExporter = new AdjustingTraceExporter(
       this.shouldExportTraces()
         ? new TraceExporter({
-            credentials: this.options.credentials,
+            credentials: this.config.credentials,
           })
         : new InMemorySpanExporter()
     );
@@ -105,18 +104,18 @@ export class GcpOpenTelemetry implements TelemetryConfig {
     metricExporter = this.buildMetricExporter();
     return new PeriodicExportingMetricReader({
       exportIntervalMillis:
-        this.options?.telemetryConfig?.metricExportIntervalMillis || 300_000,
+        this.config.telemetryConfig.metricExportIntervalMillis,
       exportTimeoutMillis:
-        this.options?.telemetryConfig?.metricExportTimeoutMillis || 300_000,
+        this.config.telemetryConfig.metricExportTimeoutMillis,
       exporter: metricExporter,
     });
   }
 
   /** Gets all open telemetry instrumentations as configured by the plugin. */
   private getInstrumentations() {
-    if (this.options?.telemetryConfig?.autoInstrumentation) {
+    if (this.config.telemetryConfig.autoInstrumentation) {
       return getNodeAutoInstrumentations(
-        this.options?.telemetryConfig?.autoInstrumentationConfig || {}
+        this.config.telemetryConfig.autoInstrumentationConfig || {}
       ).concat(this.getDefaultLoggingInstrumentations());
     }
     return this.getDefaultLoggingInstrumentations();
@@ -124,17 +123,15 @@ export class GcpOpenTelemetry implements TelemetryConfig {
 
   private shouldExportTraces(): boolean {
     return (
-      (this.options.telemetryConfig?.forceDevExport ||
-        process.env.GENKIT_ENV !== 'dev') &&
-      !this.options.telemetryConfig?.disableTraces
+      this.config.telemetryConfig.export &&
+      !this.config.telemetryConfig.disableTraces
     );
   }
 
   private shouldExportMetrics(): boolean {
     return (
-      (this.options.telemetryConfig?.forceDevExport ||
-        process.env.GENKIT_ENV !== 'dev') &&
-      !this.options.telemetryConfig?.disableMetrics
+      this.config.telemetryConfig.export &&
+      !this.config.telemetryConfig.disableMetrics
     );
   }
 
@@ -149,12 +146,12 @@ export class GcpOpenTelemetry implements TelemetryConfig {
   private buildMetricExporter(): PushMetricExporter {
     const exporter: PushMetricExporter = this.shouldExportMetrics()
       ? new MetricExporter({
-          projectId: this.options.projectId,
+          projectId: this.config.projectId,
           userAgent: {
             product: 'genkit',
             version: GENKIT_VERSION,
           },
-          credentials: this.options.credentials,
+          credentials: this.config.credentials,
         })
       : new InMemoryMetricExporter(AggregationTemporality.DELTA);
     exporter.selectAggregation = (instrumentType: InstrumentType) => {

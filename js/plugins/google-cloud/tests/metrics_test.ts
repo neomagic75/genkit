@@ -27,9 +27,9 @@ import {
 import { registerFlowStateStore } from '@genkit-ai/core/registry';
 import { defineFlow, run, runAction, runFlow } from '@genkit-ai/flow';
 import {
-  __getMetricExporterForTesting,
   GcpOpenTelemetry,
   googleCloud,
+  __getMetricExporterForTesting,
 } from '@genkit-ai/google-cloud';
 import {
   Counter,
@@ -38,6 +38,7 @@ import {
   ScopeMetrics,
   SumMetricData,
 } from '@opentelemetry/sdk-metrics';
+import { AlwaysOnSampler } from '@opentelemetry/sdk-trace-base';
 import assert from 'node:assert';
 import { before, beforeEach, describe, it } from 'node:test';
 import { z } from 'zod';
@@ -565,8 +566,15 @@ describe('GoogleCloudMetrics', () => {
     it('should export only traces', async () => {
       const telemetry = new GcpOpenTelemetry({
         telemetryConfig: {
-          forceDevExport: true,
+          export: true,
           disableMetrics: true,
+          disableTraces: false,
+          sampler: new AlwaysOnSampler(),
+          autoInstrumentation: false,
+          autoInstrumentationConfig: {},
+          instrumentations: [],
+          metricExportIntervalMillis: 10000,
+          metricExportTimeoutMillis: 10000,
         },
       });
       assert.equal(telemetry['shouldExportTraces'](), true);
@@ -576,9 +584,15 @@ describe('GoogleCloudMetrics', () => {
     it('should export only metrics', async () => {
       const telemetry = new GcpOpenTelemetry({
         telemetryConfig: {
-          forceDevExport: true,
-          disableTraces: true,
+          export: true,
           disableMetrics: false,
+          disableTraces: true,
+          sampler: new AlwaysOnSampler(),
+          autoInstrumentation: false,
+          autoInstrumentationConfig: {},
+          instrumentations: [],
+          metricExportIntervalMillis: 10000,
+          metricExportTimeoutMillis: 10000,
         },
       });
       assert.equal(telemetry['shouldExportTraces'](), false);

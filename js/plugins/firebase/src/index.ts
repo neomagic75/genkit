@@ -14,20 +14,22 @@
  * limitations under the License.
  */
 
-import { genkitPlugin, isDevEnv, Plugin } from '@genkit-ai/core';
-import { logger } from '@genkit-ai/core/logging';
+import { genkitPlugin, Plugin } from '@genkit-ai/core';
 import { FirestoreStateStore } from '@genkit-ai/flow';
 import {
   GcpLogger,
   GcpOpenTelemetry,
-  TelemetryConfig,
+  GcpTelemetryConfigOptions,
+  TelemetryConfigs,
 } from '@genkit-ai/google-cloud';
 import { GoogleAuth } from 'google-auth-library';
 import { FirestoreTraceStore } from './firestoreTraceStore.js';
 export { defineFirestoreRetriever } from './firestoreRetriever.js';
 
 interface FirestorePluginParams {
+  /** Firebase projectId is required, either passed here, through GCLOUD_PROJECT or application default credentials. */
   projectId?: string;
+
   flowStateStore?: {
     collection?: string;
     databaseId?: string;
@@ -36,7 +38,9 @@ interface FirestorePluginParams {
     collection?: string;
     databaseId?: string;
   };
-  telemetryConfig?: TelemetryConfig;
+
+  /** Overrides for telemetry config defaults. */
+  telemetryConfig?: GcpTelemetryConfigOptions;
 }
 
 export const firebase: Plugin<[FirestorePluginParams] | []> = genkitPlugin(
@@ -58,21 +62,17 @@ export const firebase: Plugin<[FirestorePluginParams] | []> = genkitPlugin(
     } else {
       authClient = new GoogleAuth();
     }
-
     const projectId = params?.projectId || (await authClient.getProjectId());
-
     const gcpOptions = {
       projectId,
       credentials,
-      telemetryConfig: params?.telemetryConfig,
+      telemetryConfig: TelemetryConfigs.defaults(params?.telemetryConfig),
     };
-
     const flowStateStoreOptions = {
       projectId,
       credentials,
       ...params?.flowStateStore,
     };
-
     const traceStoreOptions = {
       projectId,
       credentials,
@@ -101,16 +101,3 @@ export const firebase: Plugin<[FirestorePluginParams] | []> = genkitPlugin(
     };
   }
 );
-
-async function getProjectId(authClient: GoogleAuth): Promise<string> {
-  if (isDevEnv()) {
-    return await authClient.getProjectId().catch((err) => {
-      logger.warn(
-        'WARNING: unable to determine Project ID, run "gcloud auth application-default login --project MY_PROJECT_ID"'
-      );
-      return '';
-    });
-  }
-
-  return await authClient.getProjectId();
-}
