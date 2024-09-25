@@ -65,7 +65,7 @@ export default configureGenkit({
   // load at least one plugin representing each action type
   plugins: [
     // runtime
-    firebase(),
+    firebase({ telemetryConfig: { forceDevExport: true } }),
 
     // model providers
     googleAI({
@@ -140,6 +140,11 @@ export default configureGenkit({
     // prompt files
     dotprompt({ dir: './prompts' }),
   ],
+
+  telemetry: {
+    logger: 'firebase',
+    instrumentation: 'firebase',
+  },
 });
 
 export * from './main/flows-durable.js';

@@ -15,7 +15,7 @@
  */
 
 import { defineDotprompt, prompt } from '@genkit-ai/dotprompt';
-import { defineFlow } from '@genkit-ai/flow';
+import { defineFlow, run } from '@genkit-ai/flow';
 import { gemini15Flash } from '@genkit-ai/googleai';
 import * as z from 'zod';
 import { HelloFullNameSchema, HelloSchema } from '../common/types.js';
@@ -114,11 +114,26 @@ defineFlow(
 prompt('hello').then((prompt) => {
   defineFlow(
     {
-      name: 'flowDotPrompt',
+      name: 'helloFlow',
       inputSchema: HelloSchema,
       outputSchema: z.string(),
     },
-    async (input) => (await prompt.generate({ input })).text()
+    async (input) => {
+      const response = await prompt.generate({ input });
+      const result = run('deliverMessage', async () => {
+        const out = response.text();
+        if (
+          input.persona?.includes('Lionel Richie') &&
+          !out.includes("Is it me you're looking for?")
+        ) {
+          throw new Error(
+            "Lionel Richie did not say << IS IT ME YOU'RE LOOKING FOR? >>"
+          );
+        }
+        return response.text();
+      });
+      return result;
+    }
   );
 });
 
